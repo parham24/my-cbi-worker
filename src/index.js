@@ -1,0 +1,540 @@
+// =================================================================
+// بخش ۱: کد جدید برای خبررسانی آنی به افزونه (Durable Object)
+// این بخش کاملاً جدید است و با کدهای قبلی شما تداخلی ندارد.
+// =================================================================
+
+export class BankAnnouncer {
+    constructor(state, env) {
+        this.state = state;
+        // sessions لیستی از تمام افزونه‌های آنلاینی که به ما متصل هستند را نگه می‌دارد
+        this.sessions = [];
+    }
+
+    // این تابع درخواست‌های ورودی به این کلاس را مدیریت می‌کند
+    async fetch(request) {
+        const url = new URL(request.url);
+
+        // اگر یک افزونه بخواهد از طریق WebSocket به ما متصل شود
+        if (request.headers.get("Upgrade") === "websocket") {
+            const pair = new WebSocketPair();
+            const [client, server] = Object.values(pair);
+            
+            // اتصال جدید را به لیست جلسات فعال اضافه می‌کنیم
+            this.handleSession(server);
+            
+            return new Response(null, { status: 101, webSocket: client });
+        }
+        // اگر ورکر اصلی به ما دستور دهد که یک پیام را برای همه افزونه‌ها بفرستیم
+        else if (url.pathname === "/broadcast" && request.method === "POST") {
+            const message = await request.text();
+            this.broadcast(message);
+            return new Response("Broadcasted to extensions", { status: 200 });
+        }
+
+        return new Response("Not found", { status: 404 });
+    }
+    
+    // یک اتصال جدید را به لیست جلسات ما اضافه می‌کند
+    handleSession(socket) {
+        this.sessions.push(socket);
+        
+        // اگر اتصالی قطع شد یا با خطا مواجه شد، آن را از لیست حذف می‌کنیم
+        const closeOrErrorHandler = () => {
+            this.sessions = this.sessions.filter(s => s !== socket);
+        };
+        socket.addEventListener("close", closeOrErrorHandler);
+        socket.addEventListener("error", closeOrErrorHandler);
+    }
+
+    // پیام را برای همه افزونه‌های آنلاین ارسال می‌کند
+    broadcast(message) {
+        this.sessions.forEach(session => {
+            try {
+                session.send(message);
+            } catch (err) {
+                // اگر ارسال ناموفق بود (یعنی اتصال قبلاً قطع شده)، آن را از لیست حذف می‌کنیم
+                this.sessions = this.sessions.filter(s => s !== session);
+            }
+        });
+    }
+}
+
+
+// =================================================================
+// بخش ۲: ورکر اصلی شما که ارتقا یافته است
+// در اینجا فقط منطق مسیریابی تغییر کرده تا مسیر جدید /ws را بشناسد
+// =================================================================
+
+export default {
+    async fetch(request, env) {
+        const url = new URL(request.url);
+
+        // مسیر جدید: اگر افزونه‌ای خواست از طریق WebSocket متصل شود
+        if (url.pathname === "/ws") {
+            // ما همیشه از یک "خبررسان" با نام ثابت استفاده می‌کنیم تا همه به یک جا متصل شوند
+            const id = env.BANK_ANNOUNCER.idFromName("global-announcer");
+            const durableObject = env.BANK_ANNOUNCER.get(id);
+            // درخواست اتصال را به کلاس خبررسان (BankAnnouncer) می‌سپاریم
+            return durableObject.fetch(request);
+        }
+        // مسیرهای قبلی شما بدون هیچ تغییری باقی مانده‌اند
+        else if (url.pathname === "/report_province") {
+            return await handleProvinceUpdate(request, env);
+        } 
+        else if (url.pathname.startsWith("/webhook")) {
+            return await handleTelegramWebhook(request, env);
+        }
+        
+        return new Response("Endpoint Not Found.", { status: 404 });
+    },
+};
+
+
+// =================================================================
+// بخش ۳: تمام کدهای اصلی و دست‌نخورده شما
+// تمام توابع و منطق‌های زیر دقیقاً همان چیزی هستند که خودتان نوشته بودید،
+// به جز یک قطعه کد کوچک که برای ارسال اعلان به افزونه اضافه شده است.
+// =================================================================
+
+// ثابت‌ها و نقشه‌ها
+const BANK_MAP = {
+    "12": "بانک ملت", "13": "بانک رفاه کارگران", "15": "بانک سپه", "16": "بانک کشاورزی", "17": "بانک ملی ایران", "18": "بانک تجارت", "19": "بانک صادرات", "20": "بانک توسعه صادرات ایران", "21": "پست بانک ایران", "22": "بانک توسعه تعاون", "53": "بانک کارآفرین", "54": "بانک پارسیان", "55": "بانک اقتصاد نوین", "56": "بانک سامان", "57": "بانک پاسارگاد", "59": "بانک سینا", "60": "بانک قرض الحسنه مهر ایران", "61": "بانک شهر", "62": "بانک آینده", "64": "بانک گردشگری", "70": "بانک قرض الحسنه رسالت", "75": "موسسه اعتباری ملل"
+};
+const PROVINCE_LIST = [
+    "آذربایجان شرقی", "آذربایجان غربی", "اردبیل", "اصفهان", "البرز", "ایلام", "بوشهر", "تهران", "چهارمحال و بختیاری", "خراسان جنوبی", "خراسان رضوی", "خراسان شمالی", "خوزستان", "زنجان", "سمنان", "سیستان و بلوچستان", "فارس", "قزوین", "قم", "کردستان", "کرمان", "کرمانشاه", "کهگیلویه و بویراحمد", "گلستان", "گیلان", "لرستان", "مازندران", "مرکزی", "هرمزگان", "همدان", "یزد"
+];
+
+// توابع کمکی عمومی
+function getTehranDateTime() {
+    const tehranOffset = 3.5 * 60 * 60 * 1000;
+    const tehranDate = new Date(Date.now() + tehranOffset);
+    const shamsiDate = new Intl.DateTimeFormat('fa-IR-u-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(tehranDate);
+    const time = tehranDate.getUTCHours().toString().padStart(2, '0') + ':' +
+                 tehranDate.getUTCMinutes().toString().padStart(2, '0') + ':' +
+                 tehranDate.getUTCSeconds().toString().padStart(2, '0');
+    return { shamsiDate, time };
+}
+
+function timeToMinutes(timeStr) {
+    if (!timeStr || !timeStr.includes(':')) return -1;
+    const parts = timeStr.split(':');
+    const hours = parseInt(parts[0], 10);
+    const minutes = parseInt(parts[1], 10);
+    if (isNaN(hours) || isNaN(minutes)) return -1;
+    return hours * 60 + minutes;
+}
+
+// کیبوردهای ربات
+const ADMIN_MAIN_MENU = { inline_keyboard: [[{ text: "👤 مدیریت کاربران افزونه", callback_data: "menu_reporters" }],[{ text: "📣 مدیریت مشترکین (کانال‌ها)", callback_data: "menu_subscribers" }],[{ text: "📍 مدیریت استان فعال", callback_data: "menu_province_focus" }]] };
+const REPORTERS_MENU = { inline_keyboard: [[{ text: "📜 لیست کامل کاربران", callback_data: "list_reporters" }],[{ text: "✍️ تغییر نام کاربر", callback_data: "start_rename" }],[{ text: "🚫 مسدود کردن کاربر", callback_data: "start_ban" }],[{ text: "✅ رفع مسدودی کاربر", callback_data: "start_unban" }],[{ text: "🔙 بازگشت به منوی اصلی", callback_data: "main_menu" }]]};
+const SUBSCRIBERS_MENU = { inline_keyboard: [[{ text: "📜 لیست کامل مشترکین", callback_data: "list_subscribers" }], [{ text: "➕ افزودن مشترک جدید", callback_data: "start_add_subscriber" }], [{ text: "🔄 فعال/غیرفعال کردن مشترک", callback_data: "start_toggle_subscriber" }], [{ text: "🗑 حذف مشترک", callback_data: "start_remove_subscriber" }], [{ text: "🔙 بازگشت به منوی اصلی", callback_data: "main_menu" }]]};
+const PROVINCE_FOCUS_MENU = { inline_keyboard: [[{ text: "🎯 انتخاب/تغییر استان فعال", callback_data: "start_set_focus" }],[{ text: "🌐 لغو محدودیت (اطلاع‌رسانی همه استان‌ها)", callback_data: "clear_focus" }],[{ text: "🔙 بازگشت به منوی اصلی", callback_data: "main_menu" }]]};
+
+
+// تابع مدیریت آپدیت‌های استانی از افزونه
+async function handleProvinceUpdate(request, env) {
+    const DB = env.DB;
+    const SUBSCRIBERS_KEY = "subscribers_data";
+    const REPORTERS_DATA_KEY = "reporters_data";
+    const FOCUSED_PROVINCE_KEY = "focused_province";
+
+    if (request.method !== 'POST') return new Response('POST requests only', { status: 405 });
+    
+    try {
+        const { province, ids: currentIdsString, time: samaneTime, reporterId } = await request.json();
+        
+        if (!province || typeof currentIdsString === 'undefined' || !reporterId) {
+            return new Response('Invalid data. "province", "ids", and "reporterId" are required.', { status: 400 });
+        }
+
+        const { time: workerTime } = getTehranDateTime();
+        if (samaneTime) { 
+            const samaneMinutes = timeToMinutes(samaneTime);
+            const workerMinutes = timeToMinutes(workerTime);
+            if (samaneMinutes !== -1 && workerMinutes !== -1 && Math.abs(workerMinutes - samaneMinutes) > 2) {
+                return new Response(`Stale data rejected. Page time: ${samaneTime}, Server time: ${workerTime}`, { status: 409 });
+            }
+        }
+                
+        const reportersDataString = await DB.get(REPORTERS_DATA_KEY);
+        const reportersData = reportersDataString ? JSON.parse(reportersDataString) : {};
+        const reporterInfo = reportersData[reporterId];
+
+        if (reporterInfo && reporterInfo.status === 'banned') {
+            return new Response('Your access is restricted.', { status: 403 });
+        }
+
+        const provinceStorageKey = `list_${province}`;
+        const previousIdsString = await DB.get(provinceStorageKey);
+        
+        if (previousIdsString !== currentIdsString) {
+            await DB.put(provinceStorageKey, currentIdsString);
+            const currentScore = (reporterInfo && reporterInfo.score) ? reporterInfo.score : 0;
+            reportersData[reporterId] = { ...reporterInfo, score: currentScore + 1, status: 'active' };
+            await DB.put(REPORTERS_DATA_KEY, JSON.stringify(reportersData));
+
+            const subscribersDataString = await DB.get(SUBSCRIBERS_KEY);
+            const subscribersData = subscribersDataString ? JSON.parse(subscribersDataString) : {};
+            const activeSubscribers = Object.keys(subscribersData)
+                .filter(id => subscribersData[id].status === 'active');
+            
+            const focusedProvince = await DB.get(FOCUSED_PROVINCE_KEY);
+
+            if (activeSubscribers.length > 0 && (!focusedProvince || province === focusedProvince)) {
+                const { shamsiDate, time: preciseTime } = getTehranDateTime();
+                let finalUpdateTime = (samaneTime && preciseTime.startsWith(samaneTime)) ? preciseTime : `${samaneTime || 'نامشخص'} (ثبت در: ${preciseTime})`;
+                const bankIds = currentIdsString.split(',').filter(id => id);
+                const bankNames = bankIds.map(id => BANK_MAP[id] || `بانک ناشناس (${id})`);
+                
+                let formattedText = `📢 <b>تغییرات جدید در لیست بانک‌های استان «${province}»</b>\n\n`;
+                if (bankNames.length > 0) {
+                    bankNames.forEach(name => { formattedText += `🔹 ${name}\n`; });
+                } else {
+                    formattedText += `❌ <i>در این استان، در حال حاضر هیچ بانکی فعال نیست.</i>\n`;
+                }
+                formattedText += `\n🗓 تاریخ: <code>${shamsiDate}</code>\n🕰️ زمان بروزرسانی: <code>${finalUpdateTime}</code>`;
+                
+                const updatedReporterInfo = reportersData[reporterId];
+                if (updatedReporterInfo && updatedReporterInfo.name) {
+                    formattedText += `\n\n🔄 بروزرسانی توسط: <b>${updatedReporterInfo.name}</b>`;
+                }
+                formattedText += `\n\n🆔 @vam_farzand<a href="https://t.me/vam_farzand?start=trigger"> </a>`;
+
+                for (const chatId of activeSubscribers) {
+                    await sendOrEditMessage(chatId, formattedText, null, env);
+                }
+
+                // >>>>> تنها کد جدید در این تابع <<<<<
+                // در اینجا به کلاس خبررسان دستور می‌دهیم که تغییرات را به همه افزونه‌ها ارسال کند
+                try {
+                    const broadcastPayload = JSON.stringify({
+                        type: 'BANK_LIST_UPDATE',
+                        province: province,
+                        banks: bankNames,
+                        updateTime: finalUpdateTime
+                    });
+                    
+                    const doId = env.BANK_ANNOUNCER.idFromName("global-announcer");
+                    const doStub = env.BANK_ANNOUNCER.get(doId);
+                    
+                    await doStub.fetch(new Request("https://internal-do/broadcast", {
+                        method: "POST",
+                        body: broadcastPayload,
+                    }));
+                    console.log(`Broadcasted update for province ${province} to Extension clients.`);
+                } catch (e) {
+                    console.error("Extension broadcast failed:", e);
+                }
+                // >>>>> پایان کد جدید <<<<<
+                
+                return new Response("Change processed, notifications sent (TG & WS), and score updated.", { status: 200 });
+            } else if (activeSubscribers.length > 0 && focusedProvince && province !== focusedProvince) {
+                return new Response(`Update for [${province}] processed, but notification suppressed due to focus on [${focusedProvince}].`, { status: 202 });
+            }
+            
+            return new Response("Change processed and score updated (no active subscribers or notifications).", { status: 200 });
+        }
+        return new Response("No change detected for this province.", { status: 200 });
+    } catch (e) {
+        return new Response("Error: " + e.message, { status: 500 });
+    }
+}
+
+
+// ============== تمام توابع دیگر شما (از اینجا به بعد هیچ تغییری نکرده است) ==============
+
+async function handleTelegramWebhook(request, env) {
+    const DB = env.DB;
+    const update = await request.json();
+    const ADMIN_USER_ID = 477003598; // <<< شناسه عددی ادمین را اینجا وارد کنید
+
+    if (update.callback_query) {
+        const chatId = update.callback_query.message.chat.id;
+        if (chatId !== ADMIN_USER_ID) return new Response("OK");
+        await handleCallbackQuery(update.callback_query, env);
+    } else if (update.message) {
+        const chatId = update.message.chat.id;
+        const text = update.message.text ? update.message.text.trim() : "";
+
+        if (chatId !== ADMIN_USER_ID) {
+            return new Response("OK");
+        }
+        
+        const stateKey = `state_${chatId}`;
+        const userStateJSON = await DB.get(stateKey);
+        const userState = userStateJSON ? JSON.parse(userStateJSON) : null;
+
+        if (userState) {
+            await handleStatefulMessage(update.message, userState, env);
+        } else if (text === "/admin") {
+            await sendOrEditMessage(chatId, "🛠 به پنل مدیریت خوش آمدید. لطفاً یک گزینه را انتخاب کنید:", ADMIN_MAIN_MENU, env);
+        }
+    }
+    return new Response("OK");
+}
+
+async function handleCallbackQuery(callbackQuery, env) {
+    const { data: callbackData, message } = callbackQuery;
+    const chatId = message.chat.id;
+    const stateKey = `state_${chatId}`;
+    const DB = env.DB;
+    const SUBSCRIBERS_KEY = "subscribers_data";
+    const FOCUSED_PROVINCE_KEY = "focused_province";
+    const REPORTERS_DATA_KEY = "reporters_data";
+
+    if (callbackData === "main_menu") {
+        await DB.delete(stateKey);
+        await sendOrEditMessage(chatId, "🛠 به پنل مدیریت خوش آمدید:", ADMIN_MAIN_MENU, env, message.message_id);
+    }
+    else if (callbackData === "menu_reporters") {
+        await sendOrEditMessage(chatId, "👤 مدیریت کاربران افزونه:", REPORTERS_MENU, env, message.message_id);
+    } else if (callbackData === "list_reporters") {
+        await executeListReporters(chatId, env, message.message_id);
+    } else if (callbackData === "start_rename") {
+        await showReportersAsButtons(chatId, env, message.message_id, "rename_reporter", "✍️ نام کدام کاربر را می‌خواهید تغییر دهید؟");
+    } else if (callbackData.startsWith("rename_reporter:")) {
+        const reporterId = callbackData.substring("rename_reporter:".length);
+        await DB.put(stateKey, JSON.stringify({ action: "awaiting_new_name", reporterId: reporterId }));
+        await sendOrEditMessage(chatId, `✍️ لطفاً نام جدید را برای کاربر <code>${reporterId.substring(0, 8)}...</code> ارسال کنید.\n\nبرای لغو /cancel را بزنید.`, null, env, message.message_id);
+    } else if (callbackData === "start_ban") {
+        await showReportersAsButtons(chatId, env, message.message_id, "ban_reporter", "🚫 کدام کاربر را می‌خواهید مسدود کنید؟");
+    } else if (callbackData.startsWith("ban_reporter:")) {
+        const reporterId = callbackData.substring("ban_reporter:".length);
+        const reportersDataString = await DB.get(REPORTERS_DATA_KEY);
+        let reportersData = reportersDataString ? JSON.parse(reportersDataString) : {};
+        reportersData[reporterId] = { ...reportersData[reporterId], status: 'banned' };
+        await DB.put(REPORTERS_DATA_KEY, JSON.stringify(reportersData));
+        await sendOrEditMessage(chatId, `🚫 کاربر <code>${reporterId.substring(0, 8)}...</code> با موفقیت مسدود شد.`, REPORTERS_MENU, env, message.message_id);
+    } else if (callbackData === "start_unban") {
+        await showReportersAsButtons(chatId, env, message.message_id, "unban_reporter", "✅ کدام کاربر را می‌خواهید رفع مسدودی کنید؟");
+    } else if (callbackData.startsWith("unban_reporter:")) {
+        const reporterId = callbackData.substring("unban_reporter:".length);
+        const reportersDataString = await DB.get(REPORTERS_DATA_KEY);
+        let reportersData = reportersDataString ? JSON.parse(reportersDataString) : {};
+        reportersData[reporterId] = { ...reportersData[reporterId], status: 'active' };
+        await DB.put(REPORTERS_DATA_KEY, JSON.stringify(reportersData));
+        await sendOrEditMessage(chatId, `✅ کاربر <code>${reporterId.substring(0, 8)}...</code> رفع مسدودی شد.`, REPORTERS_MENU, env, message.message_id);
+    }
+    else if (callbackData === "menu_subscribers") {
+        await sendOrEditMessage(chatId, "📣 مدیریت مشترکین (کانال‌ها و گروه‌ها):", SUBSCRIBERS_MENU, env, message.message_id);
+    } else if (callbackData === "list_subscribers") {
+        await executeListSubscribers(chatId, env, message.message_id);
+    } else if (callbackData === "start_add_subscriber") {
+        await DB.put(stateKey, JSON.stringify({ action: "awaiting_subscriber_add" }));
+        await sendOrEditMessage(chatId, "➕ لطفاً شناسه عددی (Chat ID) کانال یا گروه مورد نظر را ارسال کنید.\n\nبرای لغو /cancel را بزنید.", null, env, message.message_id);
+    } else if (callbackData === "start_remove_subscriber") {
+        await showSubscribersAsButtons(chatId, env, message.message_id, "remove_subscriber", "🗑 کدام مشترک را می‌خواهید حذف کنید؟");
+    } else if (callbackData.startsWith("remove_subscriber:")) {
+        const subscriberIdToRemove = callbackData.substring("remove_subscriber:".length);
+        const subscribersDataString = await DB.get(SUBSCRIBERS_KEY);
+        let subscribersData = subscribersDataString ? JSON.parse(subscribersDataString) : {};
+        delete subscribersData[subscriberIdToRemove];
+        await DB.put(SUBSCRIBERS_KEY, JSON.stringify(subscribersData));
+        await sendOrEditMessage(chatId, `🗑 مشترک با شناسه <code>${subscriberIdToRemove}</code> با موفقیت حذف شد.`, SUBSCRIBERS_MENU, env, message.message_id);
+    } else if (callbackData === "start_toggle_subscriber") {
+        await showSubscribersAsButtons(chatId, env, message.message_id, "toggle_subscriber", "🔄 وضعیت کدام مشترک را می‌خواهید تغییر دهید؟");
+    } else if (callbackData.startsWith("toggle_subscriber:")) {
+        const subscriberIdToToggle = callbackData.substring("toggle_subscriber:".length);
+        const subscribersDataString = await DB.get(SUBSCRIBERS_KEY);
+        let subscribersData = subscribersDataString ? JSON.parse(subscribersDataString) : {};
+        if (subscribersData[subscriberIdToToggle]) {
+            const currentStatus = subscribersData[subscriberIdToToggle].status;
+            const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+            subscribersData[subscriberIdToToggle].status = newStatus;
+            await DB.put(SUBSCRIBERS_KEY, JSON.stringify(subscribersData));
+            const statusText = newStatus === 'active' ? '✅ فعال' : '⏸ غیرفعال (تستی)';
+            await sendOrEditMessage(chatId, `🔄 وضعیت مشترک <code>${subscriberIdToToggle}</code> به <b>${statusText}</b> تغییر یافت.`, SUBSCRIBERS_MENU, env, message.message_id);
+        }
+    }
+    else if (callbackData === "menu_province_focus") {
+        const focusedProvince = await DB.get(FOCUSED_PROVINCE_KEY);
+        let messageText = "📍 در این بخش می‌توانید اطلاع‌رسانی را به یک استان خاص محدود کنید.";
+        if (focusedProvince) {
+            messageText += `\n\n🟢 <b>استان فعال فعلی: «${focusedProvince}»</b>`;
+        } else {
+            messageText += `\n\n🌐 <b>در حال حاضر همه استان‌ها اطلاع‌رسانی می‌شوند.</b>`;
+        }
+        await sendOrEditMessage(chatId, messageText, PROVINCE_FOCUS_MENU, env, message.message_id);
+    } else if (callbackData === "start_set_focus") {
+        await showProvincesAsButtons(chatId, env, message.message_id, "set_focus", "🎯 لطفاً استانی که می‌خواهید اطلاع‌رسانی‌ها به آن محدود شود را انتخاب کنید:");
+    } else if (callbackData.startsWith("set_focus:")) {
+        const provinceToFocus = callbackData.substring("set_focus:".length);
+        await DB.put(FOCUSED_PROVINCE_KEY, provinceToFocus);
+        await sendOrEditMessage(chatId, `✅ محدودیت با موفقیت اعمال شد.\nاز این پس فقط بروزرسانی‌های استان «<b>${provinceToFocus}</b>» در کانال نمایش داده می‌شود.`, ADMIN_MAIN_MENU, env, message.message_id);
+    } else if (callbackData === "clear_focus") {
+        await DB.delete(FOCUSED_PROVINCE_KEY);
+        await sendOrEditMessage(chatId, `✅ محدودیت استان با موفقیت برداشته شد.\nاز این پس بروزرسانی‌های <b>تمام استان‌ها</b> در کانال نمایش داده می‌شود.`, ADMIN_MAIN_MENU, env, message.message_id);
+    }
+}
+
+async function handleStatefulMessage(message, state, env) {
+    const DB = env.DB;
+    const chatId = message.chat.id;
+    const text = message.text.trim();
+    const stateKey = `state_${chatId}`;
+    
+    if (text === "/cancel") {
+        await DB.delete(stateKey);
+        await sendOrEditMessage(chatId, "عملیات لغو شد.", ADMIN_MAIN_MENU, env);
+        return;
+    }
+
+    if (state.action === "awaiting_new_name") {
+        const reporterId = state.reporterId;
+        const newName = text;
+        const reportersDataString = await DB.get("reporters_data");
+        let reportersData = reportersDataString ? JSON.parse(reportersDataString) : {};
+        reportersData[reporterId] = { ...reportersData[reporterId], name: newName };
+        await DB.put("reporters_data", JSON.stringify(reportersData));
+        await DB.delete(stateKey);
+        await sendOrEditMessage(chatId, `✅ نام کاربر با موفقیت به "<b>${newName}</b>" تغییر یافت.`, REPORTERS_MENU, env);
+    } 
+    else if (state.action === "awaiting_subscriber_add") {
+        const newSubscriberId = text;
+        if (!/^-?\d+$/.test(newSubscriberId)) {
+            await sendOrEditMessage(chatId, "❌ خطا: ورودی باید یک شناسه عددی معتبر باشد. لطفاً دوباره تلاش کنید یا /cancel را بزنید.", null, env);
+            return;
+        }
+
+        const SUBSCRIBERS_KEY = "subscribers_data";
+        const subscribersDataString = await DB.get(SUBSCRIBERS_KEY);
+        let subscribersData = subscribersDataString ? JSON.parse(subscribersDataString) : {};
+
+        if (subscribersData[newSubscriberId]) {
+            await sendOrEditMessage(chatId, `⚠️ این مشترک (<code>${newSubscriberId}</code>) از قبل در لیست وجود دارد.`, SUBSCRIBERS_MENU, env);
+        } else {
+            subscribersData[newSubscriberId] = { status: "active" };
+            await DB.put(SUBSCRIBERS_KEY, JSON.stringify(subscribersData));
+            await sendOrEditMessage(chatId, `✅ مشترک جدید با شناسه <code>${newSubscriberId}</code> با موفقیت اضافه و فعال شد.`, SUBSCRIBERS_MENU, env);
+        }
+        await DB.delete(stateKey);
+    }
+}
+
+async function showSubscribersAsButtons(chatId, env, messageId, actionPrefix, messageText) {
+    const subscribersDataString = await env.DB.get("subscribers_data");
+    const subscribersData = subscribersDataString ? JSON.parse(subscribersDataString) : {};
+    const subscriberIds = Object.keys(subscribersData);
+
+    if (subscriberIds.length === 0) {
+        await sendOrEditMessage(chatId, "هیچ مشترکی برای انتخاب وجود ندارد.", SUBSCRIBERS_MENU, env, messageId);
+        return;
+    }
+
+    const keyboardButtons = subscriberIds.map(id => {
+        const info = subscribersData[id];
+        const statusEmoji = info.status === 'active' ? '✅' : '⏸';
+        const buttonText = `${statusEmoji} کانال/گروه: ${id}`;
+        return [{ text: buttonText, callback_data: `${actionPrefix}:${id}` }];
+    });
+    
+    keyboardButtons.push([{ text: "🔙 بازگشت", callback_data: "menu_subscribers" }]);
+    await sendOrEditMessage(chatId, messageText, { inline_keyboard: keyboardButtons }, env, messageId);
+}
+
+async function executeListSubscribers(chatId, env, messageId = null) {
+    const subscribersDataString = await env.DB.get("subscribers_data");
+    const subscribersData = subscribersDataString ? JSON.parse(subscribersDataString) : {};
+    const subscriberIds = Object.keys(subscribersData);
+    let listText = "<b>📣 لیست کامل مشترکین (کانال‌ها/گروه‌ها):</b>\n\n";
+
+    if (subscriberIds.length > 0) {
+        subscriberIds.forEach(id => {
+            const info = subscribersData[id];
+            const statusText = info.status === 'active' ? '✅ فعال' : '⏸ غیرفعال (تستی)';
+            listText += `- شناسه: <code>${id}</code> | وضعیت: <b>${statusText}</b>\n`;
+        });
+    } else {
+        listText += "<i>هنوز هیچ مشترکی ثبت نشده است.</i>";
+    }
+    await sendOrEditMessage(chatId, listText, SUBSCRIBERS_MENU, env, messageId);
+}
+
+async function showReportersAsButtons(chatId, env, messageId, actionPrefix, messageText) {
+    const reportersDataString = await env.DB.get("reporters_data");
+    const reportersData = reportersDataString ? JSON.parse(reportersDataString) : {};
+    const reporterIds = Object.keys(reportersData);
+
+    if (reporterIds.length === 0) {
+        await sendOrEditMessage(chatId, "هیچ کاربری برای انتخاب وجود ندارد.", REPORTERS_MENU, env, messageId);
+        return;
+    }
+
+    const keyboardButtons = reporterIds.map(id => {
+        const info = reportersData[id];
+        const buttonText = info.name ? info.name : `کاربر (${id.substring(0, 8)}...)`;
+        return [{ text: buttonText, callback_data: `${actionPrefix}:${id}` }];
+    });
+    keyboardButtons.push([{ text: "🔙 بازگشت", callback_data: "menu_reporters" }]);
+    await sendOrEditMessage(chatId, messageText, { inline_keyboard: keyboardButtons }, env, messageId);
+}
+
+async function executeListReporters(chatId, env, messageId = null) {
+    const reportersDataString = await env.DB.get("reporters_data");
+    const reportersData = reportersDataString ? JSON.parse(reportersDataString) : {};
+    let listText = "<b>📊 لیست کامل کاربران افزونه:</b>\n\n";
+    const reporterIds = Object.keys(reportersData);
+
+    if (reporterIds.length > 0) {
+        reporterIds.forEach(id => {
+            const info = reportersData[id];
+            const statusEmoji = info.status === 'banned' ? '🚫 مسدود' : '✅ فعال';
+            listText += `👤 <b>${info.name || '<i>(بدون نام)</i>'}</b>\n`;
+            listText += `🆔 <code>${id}</code>\n`;
+            listText += `⭐ امتیاز: <b>${info.score || 0}</b> | ${statusEmoji}\n— — — — — —\n`;
+        });
+    } else { listText += "<i>هنوز هیچ کاربری وجود ندارد.</i>"; }
+    await sendOrEditMessage(chatId, listText, REPORTERS_MENU, env, messageId);
+}
+
+async function showProvincesAsButtons(chatId, env, messageId, actionPrefix, messageText) {
+    const keyboardRows = [];
+    let currentRow = [];
+    for (const province of PROVINCE_LIST) {
+        currentRow.push({ text: province, callback_data: `${actionPrefix}:${province}` });
+        if (currentRow.length === 2) {
+            keyboardRows.push(currentRow);
+            currentRow = [];
+        }
+    }
+    if (currentRow.length > 0) {
+        keyboardRows.push(currentRow);
+    }
+    
+    keyboardRows.push([{ text: "🔙 بازگشت به منوی استان", callback_data: "menu_province_focus" }]);
+    await sendOrEditMessage(chatId, messageText, { inline_keyboard: keyboardRows }, env, messageId);
+}
+
+async function sendOrEditMessage(chatId, text, keyboard, env, messageId = null) {
+    const BOT_TOKEN = '8123012760:AAFPWhUq9gOUFitH7kk-VM4hQ6xFTk9P4k8'; // <<< توکن ربات شما
+
+    const url = messageId 
+        ? `https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`
+        : `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+
+    const payload = {
+        chat_id: chatId,
+        text: text,
+        parse_mode: 'HTML'
+    };
+
+    if (messageId) {
+        payload.message_id = messageId;
+    }
+
+    if (keyboard) {
+        payload.reply_markup = keyboard;
+    } else if (messageId) {
+        payload.reply_markup = { inline_keyboard: [] };
+    }
+
+    try {
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    } catch (e) {
+        console.error("Send/Edit Message Error:", e);
+    }
+}
