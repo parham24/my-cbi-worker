@@ -1,0 +1,21 @@
+name = "tg-api"
+main = "src/index.js"
+compatibility_date = "2024-03-20"
+
+# =======================================================
+# اتصال به دیتابیس‌های KV شما (با ID های صحیح)
+# =======================================================
+[[kv_namespaces]]
+binding = "DB"
+id = "2dc096d76e484bb99717872c192b97a7"
+
+[[kv_namespaces]]
+binding = "SCORES_DB"
+id = "f32fe0bd69da49bc8f9f6bc2cc23e8be"
+
+# =======================================================
+# فعال‌سازی قابلیت خبررسانی آنی (Durable Objects)
+# =======================================================
+[[durable_objects.bindings]]
+name = "BANK_ANNOUNCER"
+class_name = "BankAnnouncer"
