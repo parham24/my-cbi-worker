@@ -19,3 +19,4 @@ id = "f32fe0bd69da49bc8f9f6bc2cc23e8be"
 [[durable_objects.bindings]]
 name = "BANK_ANNOUNCER"
 class_name = "BankAnnouncer"
+# Trigger deployment
