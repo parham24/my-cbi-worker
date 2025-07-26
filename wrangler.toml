@@ -1,4 +1,4 @@
-name = "my-cbi-worker"
+name = "tg-api"
 main = "src/index.js"
 compatibility_date = "2024-03-20"
 
@@ -16,4 +16,4 @@ class_name = "BankAnnouncer"
 
 [migrations]
 dir = "./migrations"
-tag = "v8"
+tag = "v9"
