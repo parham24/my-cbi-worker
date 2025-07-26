@@ -34,9 +34,13 @@ export default {
         const url = new URL(request.url);
         
         if (url.pathname === "/ws") {
-            const id = env.BANK_ANNOUNCER.idFromName("global-announcer");
-            const durableObject = env.BANK_ANNOUNCER.get(id);
-            return durableObject.fetch(request);
+            try {
+                const id = env.BANK_ANNOUNCER.idFromName("global-announcer");
+                const durableObject = env.BANK_ANNOUNCER.get(id);
+                return durableObject.fetch(request);
+            } catch (e) {
+                return new Response(`Error with Durable Object: ${e.message}`, { status: 500 });
+            }
         }
         else if (url.pathname === "/report_province") {
             const response = await handleProvinceUpdate(request, env);
@@ -68,4 +72,14 @@ async function executeListSubscribers(chatId, env, messageId = null) { const sub
 async function showReportersAsButtons(chatId, env, messageId, actionPrefix, messageText) { const reportersDataString = await env.DB.get("reporters_data"); const reportersData = reportersDataString ? JSON.parse(reportersDataString) : {}; const reporterIds = Object.keys(reportersData); if (reporterIds.length === 0) { await sendOrEditMessage(chatId, "هیچ کاربری برای انتخاب وجود ندارد.", REPORTERS_MENU, env, messageId); return; } const keyboardButtons = reporterIds.map(id => { const info = reportersData[id]; const buttonText = info.name ? info.name : `کاربر (${id.substring(0, 8)}...)`; return [{ text: buttonText, callback_data: `${actionPrefix}:${id}` }]; }); keyboardButtons.push([{ text: "🔙 بازگشت", callback_data: "menu_reporters" }]); await sendOrEditMessage(chatId, messageText, { inline_keyboard: keyboardButtons }, env, messageId); }
 async function executeListReporters(chatId, env, messageId = null) { const reportersDataString = await env.DB.get("reporters_data"); const reportersData = reportersDataString ? JSON.parse(reportersDataString) : {}; let listText = "<b>📊 لیست کامل کاربران افزونه:</b>\n\n"; const reporterIds = Object.keys(reportersData); if (reporterIds.length > 0) { reporterIds.forEach(id => { const info = reportersData[id]; const statusEmoji = info.status === 'banned' ? '🚫 مسدود' : '✅ فعال'; listText += `👤 <b>${info.name || '<i>(بدون نام)</i>'}</b>\n`; listText += `🆔 <code>${id}</code>\n`; listText += `⭐ امتیاز: <b>${info.score || 0}</b> | ${statusEmoji}\n— — — — — —\n`; }); } else { listText += "<i>هنوز هیچ کاربری وجود ندارد.</i>"; } await sendOrEditMessage(chatId, listText, REPORTERS_MENU, env, messageId); }
 async function showProvincesAsButtons(chatId, env, messageId, actionPrefix, messageText) { const keyboardRows = []; let currentRow = []; for (const province of PROVINCE_LIST) { currentRow.push({ text: province, callback_data: `${actionPrefix}:${province}` }); if (currentRow.length === 2) { keyboardRows.push(currentRow); currentRow = []; } } if (currentRow.length > 0) { keyboardRows.push(currentRow); } keyboardRows.push([{ text: "🔙 بازگشت به منوی استان", callback_data: "menu_province_focus" }]); await sendOrEditMessage(chatId, messageText, { inline_keyboard: keyboardRows }, env, messageId); }
-async function sendOrEditMessage(chatId, text, keyboard, env, messageId = null) { const BOT_TOKEN = '8123012760:AAFPWhUq9gOUFitH7kk-VM4hQ6xFTk9P4k8'; const url = messageId ? `https://api.telegram.org/bot${BOT_TOKEN}/editMessageText` : `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`; const payload = { chat_id: chatId, text: text, parse_mode: 'HTML' }; if (messageId) { payload.message_id = messageId; } if (keyboard) { payload.reply_markup = keyboard; } else if (messageId) { payload.reply_markup = { inline_keyboard: [] }; } try { await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); } catch (e) { console.error("Send/Edit Message Error:", e); } }
+async function sendOrEditMessage(chatId, text, keyboard, env, messageId = null) { const BOT_TOKEN = '8123012760:AAFPWhUq9gOUFitH7kk-VM4hQ6xFTk9P4k8'; const url = messageId ? `https://api.telegram.org/bot${BOT_TOKEN}/editMessageText` : `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`; const payload = { chat_id: chatId, text: text, parse_mode: 'HTML' }; if (messageId) { payload.message_id = messageId; } if (keyboard) { payload.reply_markup = keyboard; } else if (messageId) { payload.reply_markup = { inline_keyboard: [] }; } try { await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); } catch (e) { console.error("Send/Edit Message Error:", e); } }```
+4.  روی دکمه سبز **"Commit changes"** کلیک کنید.
+
+---
+
+**بعد از انجام این دو مرحله چه کار کنیم؟**
+
+1.  **صبر (مهم):** لطفاً حدود **۳ تا ۵ دقیقه** صبر کنید تا کلودفلر تغییرات جدید شما را اعمال کند.
+2.  **رفرش افزونه:** به صفحه `kiwi://extensions` بروید و افزونه خود را رفرش کنید.
+
+این بار باید همه چیز به درستی کار کند. باز هم از صبر بی‌پایان شما و پیگیری دقیقتان ممنونم.
