@@ -1,8 +1,3 @@
-// =================================================================
-// کد کامل و نهایی ورکر - با قابلیت جلوگیری از بازخورد و با مجوز CORS
-// =================================================================
-
-// تابع کمکی جدید برای افزودن هدرهای CORS به تمام پاسخ‌ها
 const addCorsHeaders = (response) => {
     response.headers.set('Access-Control-Allow-Origin', '*');
     response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -32,12 +27,12 @@ export class BankAnnouncer {
 
 export default {
     async fetch(request, env) {
-        // پاسخ به درخواست‌های OPTIONS برای بررسی اولیه CORS
         if (request.method === 'OPTIONS') {
             return addCorsHeaders(new Response(null, { status: 204 }));
         }
 
         const url = new URL(request.url);
+        
         if (url.pathname === "/ws") {
             const id = env.BANK_ANNOUNCER.idFromName("global-announcer");
             const durableObject = env.BANK_ANNOUNCER.get(id);
@@ -45,19 +40,16 @@ export default {
         }
         else if (url.pathname === "/report_province") {
             const response = await handleProvinceUpdate(request, env);
-            return addCorsHeaders(response); // افزودن هدر CORS به پاسخ
+            return addCorsHeaders(response);
         } 
         else if (url.pathname.startsWith("/webhook")) {
             const response = await handleTelegramWebhook(request, env);
-            return addCorsHeaders(response); // افزودن هدر CORS به پاسخ
+            return addCorsHeaders(response);
         }
         
         return addCorsHeaders(new Response("Endpoint Not Found.", { status: 404 }));
     },
 };
-
-// ... بقیه کدهای شما بدون هیچ تغییری ...
-// (تمام توابع دیگر handleProvinceUpdate و توابع تلگرام را اینجا کپی می‌کنم)
 
 const BANK_MAP = { "12": "بانک ملت", "13": "بانک رفاه کارگران", "15": "بانک سپه", "16": "بانک کشاورزی", "17": "بانک ملی ایران", "18": "بانک تجارت", "19": "بانک صادرات", "20": "بانک توسعه صادرات ایران", "21": "پست بانک ایران", "22": "بانک توسعه تعاون", "53": "بانک کارآفرین", "54": "بانک پارسیان", "55": "بانک اقتصاد نوین", "56": "بانک سامان", "57": "بانک پاسارگاد", "59": "بانک سینا", "60": "بانک قرض الحسنه مهر ایران", "61": "بانک شهر", "62": "بانک آینده", "64": "بانک گردشگری", "70": "بانک قرض الحسنه رسالت", "75": "موسسه اعتباری ملل" };
 const PROVINCE_LIST = [ "آذربایجان شرقی", "آذربایجان غربی", "اردبیل", "اصفهان", "البرز", "ایلام", "بوشهر", "تهران", "چهارمحال و بختیاری", "خراسان جنوبی", "خراسان رضوی", "خراسان شمالی", "خوزستان", "زنجان", "سمنان", "سیستان و بلوچستان", "فارس", "قزوین", "قم", "کردستان", "کرمان", "کرمانشاه", "کهگیلویه و بویراحمد", "گلستان", "گیلان", "لرستان", "مازندران", "مرکزی", "هرمزگان", "همدان", "یزد" ];
