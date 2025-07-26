@@ -16,6 +16,6 @@ id = "ff32fe0bd69da49bc8f9f6bc2cc23e8e"
 name = "BANK_ANNOUNCER"
 class_name = "BankAnnouncer"
 
-# این بخش برای مدیریت دیتابیس در آینده است و بهتر است باشد
+# این بخش برای مدیریت دیتابیس در آینده است
 [migrations]
 dir = "./migrations"
