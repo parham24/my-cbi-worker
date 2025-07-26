@@ -16,4 +16,4 @@ class_name = "BankAnnouncer"
 
 [migrations]
 dir = "./migrations"
-tag = "v7"
+tag = "v8"
