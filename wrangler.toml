@@ -2,6 +2,7 @@ name = "my-cbi-worker"
 main = "src/index.js"
 compatibility_date = "2024-03-20"
 
+# تعریف دیتابیس‌های شما
 [[kv_namespaces]]
 binding = "DB"
 id = "2dc096d76e484bb99717872c192b97a7"
@@ -10,10 +11,16 @@ id = "2dc096d76e484bb99717872c192b97a7"
 binding = "SCORES_DB"
 id = "ff32fe0bd69da49bc8f9f6bc2cc23e8e"
 
+# ==========================================================
+# <<< این بخش کلیدی و مهم‌ترین بخش است >>>>
+# این کد به کلودفلر می‌گوید که کلاس BankAnnouncer را بشناسد
+# و آن را با نام BANK_ANNOUNCER در دسترس قرار دهد.
+# ==========================================================
 [[durable_objects.bindings]]
 name = "BANK_ANNOUNCER"
 class_name = "BankAnnouncer"
 
+# این بخش برای مدیریت دیتابیس در آینده است
 [migrations]
 dir = "./migrations"
-tag = "v5"
+tag = "v6" # یک تگ جدید برای اطمینان از اعمال تغییرات
