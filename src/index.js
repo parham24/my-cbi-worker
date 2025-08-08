@@ -48,23 +48,3 @@ export default {
     return new Response("Not found", { status: 404 });
   }
 };
-این هم wrangler github من : 
-name = "tg-api"
-main = "src/index.js"
-compatibility_date = "2024-03-20"
-
-[[kv_namespaces]]
-binding = "DB"
-id = "2dc096d76e484bb99717872c192b97a7"
-
-[[kv_namespaces]]
-binding = "SCORES_DB"
-id = "ff32fe0bd69da49bc8f9f6bc2cc23e8e"
-
-[[durable_objects.bindings]]
-name = "BANK_ANNOUNCER"
-class_name = "BankAnnouncer"
-
-[migrations]
-dir = "./migrations"
-tag = "v9"
