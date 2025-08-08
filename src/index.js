@@ -1,3 +1,4 @@
+// Forcing a full re-deploy, version 1.0
 export class BankAnnouncer {
   constructor(state, env) {
     this.state = state;
